@@ -15,7 +15,7 @@
 
 const DEFAULT_WS_PATH = '/vless';
 // 粘贴部署时若控制台未单独设 VPS_TARGET，则用此默认值
-const DEFAULT_VPS_TARGET = 'ws://vpn ip:20554';
+const DEFAULT_VPS_TARGET = 'ws://vps ip:20554';
 
 export default {
   async fetch(request, env, ctx) {
@@ -239,60 +239,111 @@ const ADMIN_HTML = `<!doctype html>
 </style>
 </head>
 <body>
-<h1>CF-Worker Relay 后台</h1>
-<div class="row">
-  <input id="key" placeholder="ADMIN_KEY 管理员密钥" type="password"/>
-</div>
-<div class="row">
-  <input id="name" placeholder="用户备注名（可选）"/>
-  <button onclick="createUser()">新建用户</button>
-</div>
-<p class="hint">订阅地址形如： <span id="origin"></span>/sub/&lt;token&gt;</p>
-<table id="tbl">
-  <thead><tr><th>备注</th><th>UUID</th><th>TOKEN</th><th>订阅链接</th><th>操作</th></tr></thead>
-  <tbody></tbody>
-</table>
+  <!-- 登录区 -->
+  <div id="login">
+    <h1>CF-Worker Relay 后台 <span style="font-size:12px;color:#9ca3af">v3</span></h1>
+    <div class="row">
+      <input id="key" type="password" placeholder="ADMIN_KEY 管理员密钥"/>
+      <button onclick="doLogin()">登录</button>
+    </div>
+    <p class="hint" id="loginMsg"></p>
+  </div>
+
+  <!-- 管理区（默认隐藏，登录后显示） -->
+  <div id="panel" style="display:none">
+    <h1>CF-Worker Relay 后台</h1>
+    <p class="hint">已登录 · <a href="javascript:logout()">退出登录</a></p>
+    <div class="row">
+      <input id="name" placeholder="用户备注名（可选）"/>
+      <button onclick="createUser()">新建用户</button>
+    </div>
+    <p class="hint">订阅地址形如： <span id="origin"></span>/sub/&lt;token&gt;</p>
+    <table id="tbl">
+      <thead><tr><th>备注</th><th>UUID</th><th>TOKEN</th><th>订阅链接</th><th>操作</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
 
 <script>
-const origin = location.origin;
+window.onerror=function(msg){var el=document.getElementById('loginMsg');if(el)el.textContent='页面脚本错误：'+msg;};
+var origin = location.origin;
 document.getElementById('origin').textContent = origin;
-function headers(){return {'X-Admin-Key': document.getElementById('key').value}}
+
+function apiKey(){ return encodeURIComponent(document.getElementById('key').value); }
+
+async function doLogin(){
+  var key=document.getElementById('key').value;
+  var msg=document.getElementById('loginMsg');
+  if(!key){ msg.textContent='请输入密码'; return; }
+  msg.textContent='登录中...';
+  try{
+    var r = await fetch(origin+'/api/admin/users?key='+apiKey());
+    if(r.status===200){
+      document.getElementById('login').style.display='none';
+      document.getElementById('panel').style.display='block';
+      load();
+    } else if(r.status===401){
+      msg.textContent='密码错误，请重试';
+    } else {
+      var t=''; try{ t=await r.text(); }catch(e2){}
+      msg.textContent='登录失败（HTTP '+r.status+'）：'+t;
+    }
+  }catch(e){ msg.textContent='登录请求出错：'+e.message; }
+}
+
+function logout(){
+  document.getElementById('panel').style.display='none';
+  document.getElementById('login').style.display='block';
+  document.getElementById('loginMsg').textContent='';
+}
+
 async function load(){
-  const r = await fetch(origin+'/api/admin/users',{headers:headers()});
-  if(!r.ok){
-    let detail='';
-    try{ const t=await r.text(); if(t) detail='：'+t; }catch(_){}
-    alert('加载失败（HTTP '+r.status+detail+'）\n提示：401=ADMIN_KEY 错误（请确认在 Worker 设置里添加了 ADMIN_KEY 环境变量）；500=KV 未绑定（请在 Worker「设置→变量→KV 命名空间绑定」绑定到变量名 KV）。');
-    return;
-  }
-  const d = await r.json();
-  const tb = document.querySelector('#tbl tbody'); tb.innerHTML='';
-  (d.users||[]).forEach(u=>{
-    const tr=document.createElement('tr');
-    const sub = origin+'/sub/'+u.token;
-    tr.innerHTML='<td>'+(u.name||'')+'</td><td>'+u.uuid+'</td><td>'+u.token+'</td>'+
-      '<td><a href="'+sub+'" target="_blank">'+sub+'</a></td>'+
-      '<td><button class="del" onclick="del(\''+u.token+'\')">删除</button></td>';
-    tb.appendChild(tr);
-  });
+  try{
+    var r = await fetch(origin+'/api/admin/users?key='+apiKey());
+    if(!r.ok){
+      var detail='';
+      try{ var t=await r.text(); if(t) detail='：'+t; }catch(e2){}
+      alert('加载失败（HTTP '+r.status+detail+'）');
+      return;
+    }
+    var d = await r.json();
+    var tb = document.querySelector('#tbl tbody'); tb.innerHTML='';
+    (d.users||[]).forEach(function(u){
+      var tr=document.createElement('tr');
+      var c1=document.createElement('td'); c1.textContent=u.name||''; tr.appendChild(c1);
+      var c2=document.createElement('td'); c2.textContent=u.uuid; tr.appendChild(c2);
+      var c3=document.createElement('td'); c3.textContent=u.token; tr.appendChild(c3);
+      var c4=document.createElement('td');
+      var a=document.createElement('a'); a.href=origin+'/sub/'+u.token; a.target='_blank'; a.textContent=origin+'/sub/'+u.token; c4.appendChild(a); tr.appendChild(c4);
+      var c5=document.createElement('td');
+      var btn=document.createElement('button'); btn.className='del'; btn.textContent='删除';
+      btn.addEventListener('click', function(){ del(u.token); });
+      c5.appendChild(btn); tr.appendChild(c5);
+      tb.appendChild(tr);
+    });
+  }catch(e){ alert('加载出错：'+e.message); }
 }
+
 async function createUser(){
-  const keyEl=document.getElementById('key');
-  if(!keyEl.value){ alert('请先在上方「ADMIN_KEY 管理员密钥」输入框填入密钥，再点新建用户'); keyEl.focus(); return; }
-  const name=document.getElementById('name').value;
-  const r=await fetch(origin+'/api/admin/user',{method:'POST',headers:headers(),
-    body:JSON.stringify({name})});
-  if(r.status!==200){alert('新建失败（HTTP '+r.status+'）：'+(await r.text()));return;}
-  alert('新建成功！');
-  document.getElementById('name').value='';
-  load();
+  var name=document.getElementById('name').value;
+  try{
+    var r=await fetch(origin+'/api/admin/user?key='+apiKey(),{method:'POST',body:JSON.stringify({name:name})});
+    if(r.status!==200){alert('新建失败（HTTP '+r.status+'）：'+(await r.text()));return;}
+    alert('新建成功！');
+    document.getElementById('name').value='';
+    load();
+  }catch(e){ alert('新建出错：'+e.message); }
 }
+
 async function del(token){
   if(!confirm('确认删除该用户？'))return;
-  const r=await fetch(origin+'/api/admin/user?token='+token,{method:'DELETE',headers:headers()});
-  if(!r.ok){ let t=''; try{t=await r.text();}catch(_){}; alert('删除失败（HTTP '+r.status+t+'）'); return; }
-  load();
+  try{
+    var r=await fetch(origin+'/api/admin/user?token='+encodeURIComponent(token)+'&key='+apiKey(),{method:'DELETE'});
+    if(!r.ok){ alert('删除失败（HTTP '+r.status+'）：'+(await r.text())); return; }
+    load();
+  }catch(e){ alert('删除出错：'+e.message); }
 }
-document.getElementById('key').addEventListener('change',load);
+
+document.getElementById('key').addEventListener('keydown',function(e){ if(e.key==='Enter') doLogin(); });
 </script>
 </body></html>`;
