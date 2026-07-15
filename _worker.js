@@ -5,13 +5,17 @@
  * - 自适应订阅：/sub/<token> 按当前访问域名生成 v2rayN 订阅
  * - 内部同步：/api/internal/users 供 VPS 拉取 UUID 列表
  *
- * 需要的绑定/变量（见 wrangler.toml）：
- *   - KV 命名空间，binding 名 "KV"
- *   - 环境变量 VPS_TARGET, WS_PATH
- *   - 密钥 ADMIN_KEY（wrangler secret put ADMIN_KEY）
+ * 部署方式说明：
+ *  A) wrangler deploy：变量来自 wrangler.toml（VPS_TARGET / WS_PATH / ADMIN_KEY 机密），KV 来自 [[kv_namespaces]]
+ *  B) 控制台粘贴部署（本文件直接粘贴）：wrangler.toml 不生效！需要：
+ *       - 在 Worker「设置 → 变量 → 环境变量」添加 VPS_TARGET、WS_PATH（可选，已有下方默认值）、ADMIN_KEY（机密）
+ *       - 在 Worker「设置 → 变量 → KV 命名空间绑定」把命名空间绑定到变量名 KV
+ *     下方已为 VPS_TARGET 提供默认值，粘贴后只要绑定 KV + 设 ADMIN_KEY 即可运行。
  */
 
 const DEFAULT_WS_PATH = '/vless';
+// 粘贴部署时若控制台未单独设 VPS_TARGET，则用此默认值
+const DEFAULT_VPS_TARGET = 'ws://vps ip:20554';
 
 export default {
   async fetch(request, env, ctx) {
@@ -44,10 +48,7 @@ export default {
 
 /* ---------------- WebSocket 透传 ---------------- */
 async function handleRelay(request, env) {
-  const target = (env.VPS_TARGET || '').replace(/\/+$/, '');
-  if (!target) {
-    return new Response('VPS_TARGET not configured', { status: 500 });
-  }
+  const target = (env.VPS_TARGET || DEFAULT_VPS_TARGET).replace(/\/+$/, '');
   const url = new URL(request.url);
   const upstreamUrl = target + url.pathname + url.search;
 
@@ -85,6 +86,10 @@ async function handleRelay(request, env) {
 async function handleSub(request, env, url) {
   const token = decodeURIComponent(url.pathname.split('/sub/')[1] || '');
   if (!token) return new Response('missing token', { status: 400 });
+
+  if (!env.KV) {
+    return new Response('KV 未绑定：请在 Worker「设置 → 变量 → KV 命名空间绑定」把命名空间绑定到变量名 KV', { status: 500 });
+  }
 
   const userRaw = await env.KV.get('user:' + token);
   if (!userRaw) return new Response('invalid or expired token', { status: 404 });
@@ -126,6 +131,9 @@ async function handleAdmin(request, env, url) {
   const key = url.searchParams.get('key') || request.headers.get('X-Admin-Key') || '';
   if (key !== env.ADMIN_KEY) {
     return json({ error: 'unauthorized' }, 401);
+  }
+  if (!env.KV) {
+    return json({ error: 'KV 未绑定：请在 Worker「设置 → 变量 → KV 命名空间绑定」把命名空间绑定到变量名 KV' }, 500);
   }
 
   const api = url.pathname;
@@ -251,7 +259,12 @@ document.getElementById('origin').textContent = origin;
 function headers(){return {'X-Admin-Key': document.getElementById('key').value}}
 async function load(){
   const r = await fetch(origin+'/api/admin/users',{headers:headers()});
-  if(r.status!==200){alert('鉴权失败，请检查 ADMIN_KEY');return;}
+  if(!r.ok){
+    let detail='';
+    try{ const t=await r.text(); if(t) detail='：'+t; }catch(_){}
+    alert('加载失败（HTTP '+r.status+detail+'）\n提示：401=ADMIN_KEY 错误（请确认在 Worker 设置里添加了 ADMIN_KEY 环境变量）；500=KV 未绑定（请在 Worker「设置→变量→KV 命名空间绑定」绑定到变量名 KV）。');
+    return;
+  }
   const d = await r.json();
   const tb = document.querySelector('#tbl tbody'); tb.innerHTML='';
   (d.users||[]).forEach(u=>{
@@ -273,7 +286,8 @@ async function createUser(){
 }
 async function del(token){
   if(!confirm('确认删除该用户？'))return;
-  await fetch(origin+'/api/admin/user?token='+token,{method:'DELETE',headers:headers()});
+  const r=await fetch(origin+'/api/admin/user?token='+token,{method:'DELETE',headers:headers()});
+  if(!r.ok){ let t=''; try{t=await r.text();}catch(_){}; alert('删除失败（HTTP '+r.status+t+'）'); return; }
   load();
 }
 document.getElementById('key').addEventListener('change',load);
