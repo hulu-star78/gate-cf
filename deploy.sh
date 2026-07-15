@@ -2,7 +2,7 @@
 # =============================================================
 #  CF-Worker Relay - VPS 一键部署脚本（合并版）
 #  功能：安装 Xray + OpenVPN → 从 Worker 同步 UUID → 连接 VPNGate 出口
-#  适用：Debian / Ubuntu，以 root 运行
+#  适用：Debian / Ubuntu / RHEL / CentOS / Alma / Rocky / Alpine，以 root 运行
 #
 #  用法：
 #    bash deploy.sh setup        # 安装依赖 + Xray + OpenVPN
@@ -16,6 +16,15 @@
 #    WS_PATH      ws 路径，默认 /vless
 #    PORT         Xray 监听端口，默认 20554（需与 wrangler.toml 的 VPS_TARGET 端口一致）
 # =============================================================
+# 若用 sh/dash/ash 等非 bash 解释器运行，自动改用 bash 重新执行（脚本用到 bash 特性）
+if [ -z "${BASH_VERSION:-}" ]; then
+  if command -v bash >/dev/null 2>&1; then
+    exec bash "$0" "$@"
+  else
+    echo "[-] 当前 shell 非 bash 且未找到 bash，请先安装：apk add bash / yum install bash，然后运行 bash deploy.sh"; exit 1
+  fi
+fi
+
 set -euo pipefail
 
 # ---------- 可调参数 ----------
@@ -36,9 +45,29 @@ ask_if_empty() {
 # ================= 安装依赖 =================
 install_deps() {
   [ "$(id -u)" -eq 0 ] || { echo "请使用 root 运行"; exit 1; }
-  echo "[*] 更新软件源并安装依赖 ..."
-  apt-get update -y
-  apt-get install -y openvpn curl python3 ca-certificates
+
+  # 自动检测包管理器（Debian/Ubuntu / RHEL/CentOS / Alpine）
+  if command -v apt-get >/dev/null 2>&1; then
+    PKG=apt
+    apt-get update -y
+    INSTALL="apt-get install -y"
+  elif command -v dnf >/dev/null 2>&1; then
+    PKG=dnf; INSTALL="dnf install -y"
+    dnf install -y epel-release 2>/dev/null || true
+  elif command -v yum >/dev/null 2>&1; then
+    PKG=yum; INSTALL="yum install -y"
+    yum install -y epel-release 2>/dev/null || true
+  elif command -v apk >/dev/null 2>&1; then
+    PKG=apk
+    apk update
+    INSTALL="apk add"
+  else
+    echo "[-] 未识别的包管理器，请手动安装：openvpn curl python3 ca-certificates"; exit 1
+  fi
+
+  echo "[*] 安装依赖（包管理器：$PKG）..."
+  $INSTALL openvpn curl python3 ca-certificates
+
   if [ ! -x /usr/local/bin/xray ]; then
     echo "[*] 安装 Xray ..."
     bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
