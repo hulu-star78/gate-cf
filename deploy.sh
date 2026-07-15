@@ -69,8 +69,36 @@ install_deps() {
   $INSTALL openvpn curl python3 ca-certificates
 
   if [ ! -x /usr/local/bin/xray ]; then
-    echo "[*] 安装 Xray ..."
-    bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+    echo "[*] 安装 Xray（手动下载，免 systemd）..."
+    ARCH="$(uname -m)"
+    case "$ARCH" in
+      x86_64)  XARCH=64    ;;
+      aarch64) XARCH=arm64 ;;
+      armv7l)  XARCH=armv7 ;;
+      i386|i686) XARCH=32  ;;
+      *) echo "[-] 不支持的架构：$ARCH（请手动下载对应 Xray 二进制）"; exit 1 ;;
+    esac
+    VER="$(curl -fsS https://api.github.com/repos/XTLS/Xray-core/releases/latest | python3 -c 'import json,sys;print(json.load(sys.stdin)["tag_name"])')"
+    URL="https://github.com/XTLS/Xray-core/releases/download/${VER}/Xray-linux-${XARCH}.zip"
+    echo "[*] 下载 $URL"
+    TMPZ="$(mktemp -d)"
+    curl -fsSL "$URL" -o "$TMPZ/xray.zip"
+    python3 - "$TMPZ" <<'PY'
+import sys, zipfile, os
+d = sys.argv[1]
+with zipfile.ZipFile(os.path.join(d, "xray.zip")) as z:
+    for n in z.namelist():
+        if n == "xray" or n.endswith("/xray"):
+            with open("/usr/local/bin/xray", "wb") as f:
+                f.write(z.read(n))
+            break
+PY
+    chmod +x /usr/local/bin/xray
+    if /usr/local/bin/xray version >/dev/null 2>&1; then
+      echo "[+] xray 安装成功：$(/usr/local/bin/xray version | head -1)"
+    else
+      echo "[-] xray 可执行文件校验失败"; exit 1
+    fi
   fi
   mkdir -p /usr/local/etc/xray /etc/openvpn
   echo "[+] 基础安装完成。"
@@ -114,9 +142,14 @@ JSON
   if command -v systemctl >/dev/null 2>&1 && systemctl cat xray >/dev/null 2>&1; then
     if systemctl restart xray; then echo "[+] xray 已重启 (systemd)"; else echo "[!] xray 重启失败，请手动排查日志"; fi
   else
-    pkill -f 'xray run' || true
-    nohup xray run -config "$CONFIG" >/var/log/xray.log 2>&1 &
-    echo "[+] xray 已后台启动，日志：/var/log/xray.log"
+    pkill -f '/usr/local/bin/xray run' || true
+    setsid /usr/local/bin/xray run -config "$CONFIG" >/var/log/xray.log 2>&1 < /dev/null &
+    sleep 1
+    if pgrep -f '/usr/local/bin/xray run' >/dev/null; then
+      echo "[+] xray 已后台启动，日志：/var/log/xray.log"
+    else
+      echo "[!] xray 启动失败，日志内容："; tail -n 20 /var/log/xray.log
+    fi
   fi
   rm -f "$TMP"
 }
@@ -155,7 +188,7 @@ PY
     if systemctl restart openvpn@vpngate; then echo "[+] openvpn 已启动 (systemd)"; else echo "[!] openvpn 重启失败，请手动排查日志"; fi
   else
     pkill -f "openvpn --config $OVPN_CONF" || true
-    nohup openvpn --config "$OVPN_CONF" >/var/log/vpngate.log 2>&1 &
+    setsid openvpn --config "$OVPN_CONF" >/var/log/vpngate.log 2>&1 < /dev/null &
     echo "[+] openvpn 已后台启动，日志：/var/log/vpngate.log"
   fi
 
