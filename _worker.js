@@ -15,7 +15,7 @@
 
 const DEFAULT_WS_PATH = '/vless';
 // 粘贴部署时若控制台未单独设 VPS_TARGET，则用此默认值
-const DEFAULT_VPS_TARGET = 'ws://vps ip:20554';
+const DEFAULT_VPS_TARGET = 'ws://vpn ip:20554';
 
 export default {
   async fetch(request, env, ctx) {
@@ -277,10 +277,13 @@ async function load(){
   });
 }
 async function createUser(){
+  const keyEl=document.getElementById('key');
+  if(!keyEl.value){ alert('请先在上方「ADMIN_KEY 管理员密钥」输入框填入密钥，再点新建用户'); keyEl.focus(); return; }
   const name=document.getElementById('name').value;
   const r=await fetch(origin+'/api/admin/user',{method:'POST',headers:headers(),
     body:JSON.stringify({name})});
-  if(r.status!==200){alert('失败：'+(await r.text()));return;}
+  if(r.status!==200){alert('新建失败（HTTP '+r.status+'）：'+(await r.text()));return;}
+  alert('新建成功！');
   document.getElementById('name').value='';
   load();
 }
